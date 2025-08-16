@@ -4,8 +4,12 @@ const app = express();
 const User = require("./models/user");
 const { validateSignupData } = require("./utils/validation.js");
 const bcrypt = require("bcrypt");
+const cookieParser = require("cookie-parser");
+const jwt = require("jsonwebtoken");
+const { userAuth } = require("./middleware/auth.js");
 
 app.use(express.json());
+app.use(cookieParser());
 
 app.post("/signup", async (req, res) => {
   //ENCRYPT THE PASSWORD
@@ -31,55 +35,54 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-app.get("/user", async (req, res) => {
-  const email = req.body.emailId;
-
+app.post("/login", async (req, res) => {
   try {
-    const user = await User.findOne({ emailId: email });
+    const { emailId, password } = req.body;
+
+    const user = await User.findOne({ emailId: emailId });
+
     if (!user) {
-      return res.status(404).send("User not found");
+      throw new Error("Invalid credentials");
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (isPasswordValid) {
+      //CREATE A JWT TOKEN
+
+      const token = await jwt.sign({ _id: user._id }, "DevTinderSecretKey" , {expiresIn: "0d"});
+      console.log(token);
+
+      //ADD THE TOKEN TO COOKIE AND SEND THE RESPONSE BACK TO USER
+
+      res.cookie("authToken", token);
+
+      res.send("Login successful");
     } else {
-      res.send(user);
+      throw new Error("Invalid password");
     }
-  } catch (err) {
-    console.error("Error fetching user " + err.message);
-  }
-});
-
-app.patch("/user/:userId", async (req, res) => {
-  const userId = req.params.userId;
-  const data = req.body;
-
-  try {
-    const ALLOWED_UPDATES = ["photoUrl", "about", "gender", "age"];
-
-    const isUpdateAllowed = Object.keys(data).every((key) =>
-      ALLOWED_UPDATES.includes(key)
-    );
-
-    if (!isUpdateAllowed) {
-      throw new Error("Invalid updates");
-    }
-
-    const user = await User.findByIdAndUpdate({ _id: userId }, data, {
-      returnDocument: "after",
-      runValidators: true,
-    });
-    console.log(user);
-    res.send("User updated successfully");
   } catch (error) {
-    console.error("Error fetching user " + error.message);
+    res.status(400).send({ error: "Error during login: " + error.message });
   }
 });
 
-app.get("/feed", async (req, res) => {
+app.get("/profile", userAuth, async (req, res) => {
   try {
-    const users = await User.find({});
-    res.send(users);
-  } catch (err) {
-    console.error("Error fetching user " + err.message);
+    const user = req.user;
+
+    res.send(user);
+  } catch (error) {
+    res.status(400).send("Error " + error.message);
   }
 });
+
+app.post("/sendConnectionRequest" , userAuth , (req , res) => {
+  const user = req.user;
+   
+  console.log("Connection request sent from user: ", user._id);
+
+  res.send("Connection request sent by user " + user.firstName);
+})
 
 connectDB()
   .then(() => {
